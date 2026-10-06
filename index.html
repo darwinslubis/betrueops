@@ -1476,7 +1476,7 @@ const SB_TABLES = {
   Pembayaran:"Pembayaran",
   Cashflow:"Cashflow",
   LoginLog:"LoginLog",
-  Permissions:"Permission"
+  Permissions:"Permissions"
 };
 
 const SUPABASE_HEADERS = {
@@ -1532,7 +1532,7 @@ function rebuildDashboardFromState(){
 async function refreshInitialDataFromServer(silent=true){
   if(!state.user) return false;
   try{
-    const result=await api("getInitialData",{userName:state.user.username},{silent:true,dedupe:false,timeout:90000});
+    const result=await api("getInitialData",{userName:state.user.username},{silent:true,dedupe:false,timeout:30000});
     if(!result || !result.ok) throw new Error(result?.message || "Gagal sinkronisasi seluruh data.");
     applyMenuResult({ok:true,data:result.data||{}});
     rebuildDashboardFromState();
@@ -2013,7 +2013,7 @@ async function loadData(options={}){
     // Initial load: bootstrap + SELURUH DATA dalam satu snapshot server.
     const [bootstrap,result]=await Promise.all([
       api("getBootstrap",{userName:state.user.username},{silent:true,dedupe:false,timeout:15000}),
-      api("getInitialData",{userName:state.user.username},{silent:true,dedupe:false,timeout:90000})
+      api("getInitialData",{userName:state.user.username},{silent:true,dedupe:false,timeout:30000})
     ]);
 
     if(!bootstrap || !bootstrap.ok) throw new Error(bootstrap?.message||"Session tidak valid.");
@@ -2378,7 +2378,7 @@ async function api(action,payload={},options={}){
         const rpcResult=await supabaseRpc(
           "load_all_event_data",
           {p_username:username},
-          {timeout:90000}
+          {timeout:30000}
         );
 
         if(!rpcResult || rpcResult.ok!==true){
@@ -2416,7 +2416,7 @@ async function api(action,payload={},options={}){
 
       /* ---------- PERMISSIONS ---------- */
       if(action === "getPermissions"){
-        const rows=Array.isArray(state.data.Permission) ? state.data.Permission : [];
+        const rows=Array.isArray(state.data.Permissions) ? state.data.Permissions : [];
         return {ok:true,permissions:rows};
       }
       if(action === "savePermissions"){
@@ -7753,11 +7753,34 @@ async function init(){
 
   try{
     updateUserUI();
-    await loadData({silent:false});
-    document.getElementById("loginPage").classList.add("hidden");
-    document.getElementById("app").classList.remove("hidden");
-    updateUserUI();
-    navigate("dashboard");
+
+    // Cache-first: user yang sudah pernah login langsung melihat UI,
+    // lalu data terbaru disinkronkan di background.
+    const cached=readClientCache();
+    if(cached && cached.data){
+      state.data=cached.data||{};
+      state.dashboard=cached.dashboard||null;
+      applyBootstrap({
+        ok:true,
+        userRole:state.user.role,
+        permissions:state.user.permissions||{}
+      });
+      rebuildDashboardFromState();
+      document.getElementById("loginPage").classList.add("hidden");
+      document.getElementById("app").classList.remove("hidden");
+      navigate("dashboard");
+
+      loadData({silent:true}).catch(error=>{
+        console.warn("Background sync gagal:",error);
+        showToast("Data online belum tersinkron. Data terakhir tetap ditampilkan.","error");
+      });
+    }else{
+      await loadData({silent:false});
+      document.getElementById("loginPage").classList.add("hidden");
+      document.getElementById("app").classList.remove("hidden");
+      updateUserUI();
+      navigate("dashboard");
+    }
   }catch(error){
     console.error("Restore session gagal:",error);
     stopRealtime();
